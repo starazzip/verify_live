@@ -112,6 +112,63 @@ def is_verify_api_alive(host: str, port: int) -> bool:
         return False
 
 
+def pids_listening_on(host: str, port: int) -> list[int]:
+    # 目前以 IPv4 127.0.0.1 為主；若後續要支援更多情境可再擴充。
+    pids: set[int] = set()
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.2)
+            if s.connect_ex((host, port)) != 0:
+                return []
+    except Exception:
+        return []
+
+    # 跨平台最穩定做法：呼叫 netstat 再解析 PID
+    if os.name == "nt":
+        cmd = ["netstat", "-ano", "-p", "tcp"]
+    else:
+        cmd = ["netstat", "-anp", "tcp"]
+    try:
+        out = subprocess.check_output(cmd, text=True, encoding="utf-8", errors="ignore")
+    except Exception:
+        return []
+
+    needle = f"{host}:{port}"
+    for line in out.splitlines():
+        if needle not in line:
+            continue
+        parts = line.split()
+        if not parts:
+            continue
+        pid_raw = parts[-1]
+        try:
+            pid = int(pid_raw)
+            pids.add(pid)
+        except Exception:
+            continue
+    return sorted(pids)
+
+
+def force_kill_pid_tree(pid: int) -> None:
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        return
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+        time.sleep(0.3)
+        os.killpg(os.getpgid(pid), signal.SIGKILL)
+    except Exception:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except Exception:
+            pass
+
+
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
     load_dotenv(root)
@@ -125,6 +182,11 @@ def main() -> None:
     parser.add_argument("--api-port", type=int, default=default_api_port)
     parser.add_argument("--web-port", type=int, default=default_web_port)
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument(
+        "--restart-api",
+        action="store_true",
+        help="若 API 埠已被占用，先強制關閉占用程序再啟動新 API。",
+    )
     args = parser.parse_args()
 
     api_dir = root / "verify_live_api"
@@ -148,7 +210,25 @@ def main() -> None:
 
     api_proc: Optional[subprocess.Popen] = None
     if is_port_in_use(args.api_host, args.api_port):
-        if is_verify_api_alive(args.api_host, args.api_port):
+        if args.restart_api:
+            pids = pids_listening_on(args.api_host, args.api_port)
+            if not pids:
+                raise RuntimeError(
+                    f"連接埠 {args.api_host}:{args.api_port} 被占用，但無法取得 PID。"
+                )
+            print(
+                f"[verify_live] --restart-api 啟用，關閉占用 {args.api_host}:{args.api_port} 的 PID: {pids}"
+            )
+            for pid in pids:
+                force_kill_pid_tree(pid)
+            time.sleep(1)
+            if is_port_in_use(args.api_host, args.api_port):
+                raise RuntimeError(
+                    f"已嘗試重啟 API，但連接埠 {args.api_host}:{args.api_port} 仍被占用。"
+                )
+            print(f"[verify_live] API 啟動：{' '.join(api_cmd)}")
+            api_proc = spawn_process(api_cmd, cwd=api_dir)
+        elif is_verify_api_alive(args.api_host, args.api_port):
             print(
                 f"[verify_live] 偵測到既有 verify_live API："
                 f"http://{args.api_host}:{args.api_port}，沿用既有服務。"
