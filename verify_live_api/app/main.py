@@ -49,6 +49,8 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://localhost:5173",
     ],
+    # 允許本機 localhost/127.0.0.1 任意埠（例如你自訂 15179）。
+    allow_origin_regex=r"^https?://(127\.0\.0\.1|localhost)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -152,4 +154,3 @@ def api_compare_details(
     if row is None:
         raise HTTPException(status_code=404, detail="找不到 job_id")
     return {"job_id": job_id, "items": get_compare_details(job_id, limit, offset)}
-
