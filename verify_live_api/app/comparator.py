@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -41,6 +41,16 @@ def resolve_timerange(start_yyyymmdd: str, end_mode: str, end_fixed: Optional[st
     if end_dt < start_dt:
         raise ValueError("timerange_end 不能早於 timerange_start")
     return start_dt.strftime("%Y%m%d"), end_dt.strftime("%Y%m%d")
+
+
+def build_freqtrade_timerange(start_yyyymmdd: str, end_yyyymmdd: str, *, include_end_day: bool = True) -> str:
+    start_dt = _parse_timerange_date(start_yyyymmdd)
+    end_dt = _parse_timerange_date(end_yyyymmdd)
+    if include_end_day:
+        end_dt = end_dt + timedelta(days=1)
+    if end_dt <= start_dt:
+        raise ValueError("freqtrade timerange 結束時間需晚於開始時間")
+    return f"{start_dt.strftime('%Y%m%d')}-{end_dt.strftime('%Y%m%d')}"
 
 
 def _timeframe_to_seconds(timeframe: str) -> int:
@@ -165,6 +175,14 @@ def _qty_diff_ratio(bt_amount: Optional[float], live_amount: Optional[float]) ->
     return abs(float(live_amount) - float(bt_amount)) / abs(float(bt_amount))
 
 
+def _is_strategy_mismatch(bt_strategy: Any, live_strategy: Any) -> bool:
+    bt_text = str(bt_strategy or "").strip()
+    live_text = str(live_strategy or "").strip()
+    if not bt_text and not live_text:
+        return False
+    return bt_text != live_text
+
+
 def compare_signals(
     *,
     backtest_signals: List[Dict[str, Any]],
@@ -244,8 +262,16 @@ def compare_signals(
             price_state = "MATCH" if p_diff is not None and p_diff <= price_tolerance_bps else "MISMATCH"
             qty_state = "MATCH" if q_diff is not None and q_diff <= qty_tolerance_ratio else "MISMATCH"
 
+            bt_signal_ts = str(bt.get("signal_ts", ""))
+            live_signal_ts = str(lv.get("signal_ts", ""))
+            time_is_same = bool(bt_signal_ts) and bt_signal_ts == live_signal_ts
+            strategy_mismatch = _is_strategy_mismatch(bt.get("strategy"), lv.get("strategy"))
+
             fill_lamp = "green" if (price_state == "MATCH" and qty_state == "MATCH") else "yellow"
-            reason = "價量一致" if fill_lamp == "green" else "時點一致但價量超出容忍"
+            if fill_lamp == "green" and time_is_same and strategy_mismatch:
+                reason = "策略部一致"
+            else:
+                reason = "價量一致" if fill_lamp == "green" else "時點一致但價量超出容忍"
 
             rows.append(
                 {
@@ -257,8 +283,8 @@ def compare_signals(
                     "signal_state": "MATCH_SAME_BUCKET",
                     "price_state": price_state,
                     "qty_state": qty_state,
-                    "bt_signal_ts": bt.get("signal_ts", ""),
-                    "live_signal_ts": lv.get("signal_ts", ""),
+                    "bt_signal_ts": bt_signal_ts,
+                    "live_signal_ts": live_signal_ts,
                     "bt_price": bt_price,
                     "live_price": lv_price,
                     "price_diff_bps": p_diff,
@@ -269,5 +295,14 @@ def compare_signals(
                 }
             )
 
+    rows.sort(
+        key=lambda item: (
+            str(item.get("bt_signal_ts") or item.get("live_signal_ts") or item.get("bucket_ts") or ""),
+            str(item.get("pair") or ""),
+            str(item.get("side") or ""),
+            str(item.get("bucket_ts") or ""),
+            str(item.get("bt_signal_ts") or ""),
+            str(item.get("live_signal_ts") or ""),
+        )
+    )
     return rows
-

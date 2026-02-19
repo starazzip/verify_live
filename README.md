@@ -2,13 +2,32 @@
 
 用於驗證 Spot 實盤與回測訊號一致性。
 
+## 預設目錄佈局（建議）
+`verify_live` 預設假設與 Freqtrade 的 `user_data` 同層：
+
+```text
+<你的專案根目錄>/
+  user_data/
+  verify_live/
+```
+
+若照此佈局，`config_path / strategy_path / datadir` 可直接使用 `user_data/...` 相對路徑。
+
 ## 功能
 1. Web 選 config，自動帶入策略/週期/資料路徑，允許手動調整。
-2. 一鍵「回測驗證」：執行完整指定區間回測（不依交易紀錄截斷）。
-3. 透過 Freqtrade REST API 讀取 live 交易，做同根 K 比對。
-4. 雙燈號顯示：
+2. 啟動後會自動從 `.env` 帶入 Live API 連線欄位（`base_url / username / password`）。
+3. 密碼欄位預設脫敏，可透過「顯示 / 隱藏」按鈕暫時查看。
+4. Profile 可儲存、載入、刪除（刪除時會連同相關 job 結果）。
+5. 一鍵「回測驗證」：執行完整指定區間回測（不依交易紀錄截斷）。
+6. 透過 Freqtrade REST API 讀取 live 交易，做同根 K 比對。
+7. 雙燈號顯示：
    - 訊號燈：同根 K 是否一致
    - 成交燈：價量是否在容忍度內
+8. 可按「更新 K 線」：依目前 config / timeframe / 日期區間，向交易所下載資料。
+9. 任務執行中可按「停止驗證」中止回測任務。
+10. 回測與更新 K 線執行中，頁面會即時顯示 Freqtrade 最後幾行輸出。
+11. 可按「比對 Live Config」檢查本地 config 與 Freqtrade `show_config` 是否一致。
+12. Config 比對含幣對白名單/黑名單（透過 Live API `whitelist` / `blacklist`）差異檢查。
 
 ## 目錄
 - `verify_live_api/`: FastAPI 後端
@@ -118,16 +137,31 @@ powershell -ExecutionPolicy Bypass -File scripts/start_verify_live.ps1
 3. 第一版預設容忍度：
    - 價格：10 bps
    - 數量：0.5%（`qty_tolerance_ratio=0.005`）
-4. 若 config / strategy / datadir 不在本專案目錄下，可在 `.env` 設定：
+4. 路徑統一解析規則（`config_path / strategy_path / datadir`）：
+   - 絕對路徑：直接使用
+   - 相對路徑：依序嘗試
+     1) `VERIFY_LIVE_WORKSPACE_ROOT`
+     2) `verify_live` 上層目錄
+     3) `verify_live` 專案目錄
+   - `strategy` 類別若不在填寫的 `strategy_path`，會自動在 `user_data` 下各層 `strategies` 目錄補找
+5. 若你的實際資料不在預設佈局，可在 `.env` 設定：
    - `VERIFY_LIVE_WORKSPACE_ROOT=<你的交易專案根目錄>`
-5. `VERIFY_LIVE_CONFIG_ROOTS` 若使用相對路徑，會先以 `VERIFY_LIVE_WORKSPACE_ROOT` 解析；若不存在，會自動嘗試 `verify_live` 上層目錄。
+6. `VERIFY_LIVE_CONFIG_ROOTS` 若使用相對路徑，也會套用上述同一套解析規則。
 
 ## API 摘要
+- `GET /api/verify/defaults`
 - `GET /api/verify/configs`
 - `GET /api/verify/profiles`
 - `POST /api/verify/profiles`
+- `POST /api/verify/profiles/{profile_id}/config-compare`
+- `DELETE /api/verify/profiles/{profile_id}`
 - `POST /api/verify/jobs`
 - `GET /api/verify/jobs/{job_id}`
+- `GET /api/verify/jobs/{job_id}/logs/tail`
+- `POST /api/verify/jobs/{job_id}/cancel`
+- `POST /api/verify/data-jobs`
+- `GET /api/verify/data-jobs/{data_job_id}`
+- `GET /api/verify/data-jobs/{data_job_id}/logs/tail`
 - `GET /api/verify/jobs/{job_id}/signals?source=backtest|live`
 - `GET /api/verify/jobs/{job_id}/compare/summary`
 - `GET /api/verify/jobs/{job_id}/compare/details`

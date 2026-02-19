@@ -33,19 +33,39 @@ class FreqtradeApiClient:
 
     def login(self) -> str:
         url = f"{self._api_base}/api/v1/token/login"
-        payload = {"username": self.creds.username, "password": self.creds.password}
-        try:
-            resp = requests.post(url, json=payload, timeout=self.timeout)
-        except Exception as exc:
-            raise FreqtradeApiError(f"連線失敗：{exc}") from exc
-        if resp.status_code >= 400:
-            raise FreqtradeApiError(f"登入失敗（HTTP {resp.status_code}）：{resp.text[:300]}")
-        data = resp.json()
-        token = data.get("access_token") or data.get("token")
-        if not token:
-            raise FreqtradeApiError("登入成功但回應缺少 access_token")
-        self._token = str(token)
-        return self._token
+        attempts = [
+            {
+                "name": "basic",
+                "kwargs": {"auth": (self.creds.username, self.creds.password)},
+            },
+            {
+                "name": "json",
+                "kwargs": {"json": {"username": self.creds.username, "password": self.creds.password}},
+            },
+            {
+                "name": "form",
+                "kwargs": {"data": {"username": self.creds.username, "password": self.creds.password}},
+            },
+        ]
+
+        last_status = None
+        last_text = ""
+        for item in attempts:
+            try:
+                resp = requests.post(url, timeout=self.timeout, **item["kwargs"])
+            except Exception as exc:
+                raise FreqtradeApiError(f"連線失敗：{exc}") from exc
+            if resp.status_code < 400:
+                data = resp.json()
+                token = data.get("access_token") or data.get("token")
+                if not token:
+                    raise FreqtradeApiError("登入成功但回應缺少 access_token")
+                self._token = str(token)
+                return self._token
+            last_status = resp.status_code
+            last_text = resp.text[:300]
+
+        raise FreqtradeApiError(f"登入失敗（HTTP {last_status}）：{last_text}")
 
     def _headers(self) -> Dict[str, str]:
         if not self._token:
@@ -97,3 +117,24 @@ class FreqtradeApiClient:
                 return payload["data"]
         return []
 
+    def fetch_show_config(self) -> Dict[str, Any]:
+        payload = self._get("/api/v1/show_config")
+        if not isinstance(payload, dict):
+            raise FreqtradeApiError("show_config 回傳格式錯誤")
+        return payload
+
+    def fetch_whitelist(self) -> List[str]:
+        payload = self._get("/api/v1/whitelist")
+        if isinstance(payload, dict) and isinstance(payload.get("whitelist"), list):
+            return [str(x) for x in payload["whitelist"]]
+        if isinstance(payload, list):
+            return [str(x) for x in payload]
+        return []
+
+    def fetch_blacklist(self) -> List[str]:
+        payload = self._get("/api/v1/blacklist")
+        if isinstance(payload, dict) and isinstance(payload.get("blacklist"), list):
+            return [str(x) for x in payload["blacklist"]]
+        if isinstance(payload, list):
+            return [str(x) for x in payload]
+        return []

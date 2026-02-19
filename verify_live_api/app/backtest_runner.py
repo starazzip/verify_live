@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from . import settings
+from .process_runner import run_command_with_live_log
 
 
 @dataclass
@@ -20,6 +20,7 @@ class BacktestResult:
     output_json: Path
     output_zip: Optional[Path]
     trades: List[Dict[str, Any]]
+    cancelled: bool = False
 
     @property
     def ok(self) -> bool:
@@ -90,8 +91,11 @@ def run_backtest(
     timeframe: str,
     timerange: str,
     datadir: str,
+    userdir: str,
     fee: Optional[float],
     run_dir: Path,
+    should_cancel: Optional[Callable[[], bool]] = None,
+    pairs: Optional[List[str]] = None,
     extra_args: Optional[List[str]] = None,
 ) -> BacktestResult:
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -118,23 +122,25 @@ def run_backtest(
         "--export-filename",
         str(output_json),
     ]
+    if userdir:
+        cmd[2:2] = ["--userdir", userdir]
     if datadir:
         cmd += ["--datadir", datadir]
     if fee is not None:
         cmd += ["--fee", str(fee)]
+    if pairs:
+        cmd += ["--pairs", *[str(p) for p in pairs if str(p).strip()]]
     if extra_args:
         cmd += extra_args
 
-    proc = subprocess.run(
-        cmd,
+    proc_result = run_command_with_live_log(
+        cmd=cmd,
         cwd=settings.WORKSPACE_ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="ignore",
+        log_path=log_path,
+        should_cancel=should_cancel,
     )
-    log_path.write_text(proc.stdout or "", encoding="utf-8")
+    exit_code = proc_result.exit_code
+    cancelled = proc_result.cancelled
 
     trades: List[Dict[str, Any]] = []
     payload_obj = _to_json_obj(output_json)
@@ -146,11 +152,11 @@ def run_backtest(
         trades = _load_from_zip(output_zip, strategy)
 
     return BacktestResult(
-        exit_code=proc.returncode,
+        exit_code=exit_code,
         command=cmd,
         log_path=log_path,
         output_json=output_json,
         output_zip=output_zip,
         trades=trades,
+        cancelled=cancelled,
     )
-

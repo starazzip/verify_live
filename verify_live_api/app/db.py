@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+import shutil
 
 from . import settings
 
@@ -50,6 +51,26 @@ def init_db() -> None:
                 resolved_timerange_end TEXT DEFAULT '',
                 run_dir TEXT DEFAULT '',
                 backtest_exit_code INTEGER,
+                FOREIGN KEY(profile_id) REFERENCES profiles(profile_id)
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS data_jobs (
+                data_job_id TEXT PRIMARY KEY,
+                profile_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT,
+                error TEXT DEFAULT '',
+                resolved_timerange_start TEXT DEFAULT '',
+                resolved_timerange_end TEXT DEFAULT '',
+                timeframe TEXT DEFAULT '',
+                run_dir TEXT DEFAULT '',
+                exit_code INTEGER,
+                command_json TEXT DEFAULT '',
                 FOREIGN KEY(profile_id) REFERENCES profiles(profile_id)
             )
             """
@@ -105,6 +126,7 @@ def init_db() -> None:
         )
         cur.execute("CREATE INDEX IF NOT EXISTS idx_signals_job_source ON signals(job_id, source)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_compare_job ON compare_results(job_id)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_data_jobs_profile ON data_jobs(profile_id)")
         conn.commit()
 
 
@@ -163,6 +185,35 @@ def save_profile(profile_id: Optional[str], payload: Dict[str, Any]) -> Dict[str
     return row
 
 
+def delete_profile(profile_id: str) -> bool:
+    with connect() as conn:
+        row = conn.execute("SELECT 1 FROM profiles WHERE profile_id=?", (profile_id,)).fetchone()
+        if row is None:
+            return False
+
+        job_rows = conn.execute("SELECT job_id, run_dir FROM jobs WHERE profile_id=?", (profile_id,)).fetchall()
+        job_ids = [str(r["job_id"]) for r in job_rows]
+        run_dirs = [str(r["run_dir"] or "").strip() for r in job_rows]
+
+        for job_id in job_ids:
+            conn.execute("DELETE FROM compare_results WHERE job_id=?", (job_id,))
+            conn.execute("DELETE FROM signals WHERE job_id=?", (job_id,))
+        conn.execute("DELETE FROM jobs WHERE profile_id=?", (profile_id,))
+        conn.execute("DELETE FROM profiles WHERE profile_id=?", (profile_id,))
+        conn.commit()
+
+    for run_dir in run_dirs:
+        if not run_dir:
+            continue
+        p = Path(run_dir)
+        if p.exists():
+            try:
+                shutil.rmtree(p, ignore_errors=True)
+            except Exception:
+                pass
+    return True
+
+
 def create_job(profile_id: str, run_dir: Path) -> Dict[str, Any]:
     now = utc_now_iso()
     job_id = f"job_{uuid.uuid4().hex[:12]}"
@@ -181,6 +232,24 @@ def create_job(profile_id: str, run_dir: Path) -> Dict[str, Any]:
     return row
 
 
+def create_data_job(profile_id: str, run_dir: Path) -> Dict[str, Any]:
+    now = utc_now_iso()
+    data_job_id = f"data_{uuid.uuid4().hex[:12]}"
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO data_jobs(data_job_id, profile_id, status, created_at, run_dir)
+            VALUES (?, ?, 'pending', ?, ?)
+            """,
+            (data_job_id, profile_id, now, str(run_dir)),
+        )
+        conn.commit()
+    row = get_data_job(data_job_id)
+    if row is None:
+        raise RuntimeError("建立 data_job 失敗")
+    return row
+
+
 def update_job(job_id: str, **kwargs: Any) -> None:
     if not kwargs:
         return
@@ -196,9 +265,30 @@ def update_job(job_id: str, **kwargs: Any) -> None:
         conn.commit()
 
 
+def update_data_job(data_job_id: str, **kwargs: Any) -> None:
+    if not kwargs:
+        return
+    cols = []
+    vals: List[Any] = []
+    for k, v in kwargs.items():
+        cols.append(f"{k}=?")
+        vals.append(v)
+    vals.append(data_job_id)
+    sql = f"UPDATE data_jobs SET {', '.join(cols)} WHERE data_job_id=?"
+    with connect() as conn:
+        conn.execute(sql, vals)
+        conn.commit()
+
+
 def get_job(job_id: str) -> Optional[Dict[str, Any]]:
     with connect() as conn:
         row = conn.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def get_data_job(data_job_id: str) -> Optional[Dict[str, Any]]:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM data_jobs WHERE data_job_id=?", (data_job_id,)).fetchone()
     return dict(row) if row else None
 
 
@@ -209,6 +299,32 @@ def list_jobs(limit: int = 50) -> List[Dict[str, Any]]:
             (limit,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def is_job_cancel_requested(job_id: str) -> bool:
+    with connect() as conn:
+        row = conn.execute("SELECT status FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+    if row is None:
+        return False
+    return str(row["status"]) == "cancel_requested"
+
+
+def request_cancel_job(job_id: str) -> Optional[Dict[str, Any]]:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+        if row is None:
+            return None
+
+        status = str(row["status"])
+        if status in ("pending", "running"):
+            conn.execute(
+                "UPDATE jobs SET status=?, error=? WHERE job_id=?",
+                ("cancel_requested", "使用者請求停止任務", job_id),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+
+    return dict(row) if row else None
 
 
 def replace_signals(job_id: str, source: str, rows: Iterable[Dict[str, Any]]) -> int:
@@ -316,7 +432,8 @@ def get_compare_details(job_id: str, limit: int = 2000, offset: int = 0) -> List
                    bt_amount, live_amount, qty_diff_ratio, reason
             FROM compare_results
             WHERE job_id=?
-            ORDER BY seq_no
+            ORDER BY COALESCE(NULLIF(bt_signal_ts, ''), NULLIF(live_signal_ts, ''), bucket_ts),
+                     pair, side, bucket_ts, seq_no
             LIMIT ? OFFSET ?
             """,
             (job_id, limit, offset),
@@ -347,4 +464,3 @@ def get_compare_summary(job_id: str) -> Dict[str, Any]:
     data["signal_match_rate"] = (signal_green / total) if total else 0.0
     data["fill_green_rate"] = (fill_green / total) if total else 0.0
     return data
-

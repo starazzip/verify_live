@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Literal, Optional, List
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -32,9 +32,10 @@ class VerifyProfilePayload(BaseModel):
     timerange_end_fixed: Optional[str] = None
     fee: Optional[float] = None
     datadir: str = ""
+    download_timeframes: Optional[List[str]] = None
     live_api_base_url: str = ""
     live_api_username: str = ""
-    live_api_password_env: str = "VERIFY_LIVE_API_PASSWORD"
+    live_api_password: str = ""
     live_strategy_name: Optional[str] = None
     price_tolerance_bps: float = settings.DEFAULT_PRICE_TOL_BPS
     qty_tolerance_ratio: float = settings.DEFAULT_QTY_TOL_RATIO
@@ -60,6 +61,18 @@ class VerifyProfilePayload(BaseModel):
         if value < 0:
             raise ValueError("qty_tolerance_ratio 不可小於 0")
         return value
+
+    @field_validator("download_timeframes")
+    @classmethod
+    def _check_download_timeframes(cls, value: Optional[List[str]]) -> Optional[List[str]]:
+        if value is None:
+            return None
+        normalized: List[str] = []
+        for item in value:
+            tf = str(item or "").strip()
+            if tf and tf not in normalized:
+                normalized.append(tf)
+        return normalized or None
 
 
 class VerifyProfileRecord(BaseModel):
@@ -115,4 +128,3 @@ class CompareSummary(BaseModel):
     fill_red: int
     signal_match_rate: float
     fill_green_rate: float
-
