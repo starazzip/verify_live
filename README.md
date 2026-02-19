@@ -70,6 +70,20 @@ python scripts/start_verify_live.py
 - 若該埠是既有 verify_live API，啟動器會自動沿用，不會重啟 API。
 - 若是其他程式占用，會直接報錯提醒你更換埠號或釋放埠。
 
+### 終止程序
+- 預設可用 `Ctrl+C` 停止（會自動關閉 API / Web 子程序樹）。
+- 若仍殘留程序，可手動執行：
+Windows:
+```powershell
+taskkill /F /T /IM node.exe
+taskkill /F /T /IM uvicorn.exe
+```
+Linux:
+```bash
+pkill -f "vite"
+pkill -f "uvicorn app.main:app"
+```
+
 ### 分開啟動（Windows / Linux 同指令）
 API:
 ```bash

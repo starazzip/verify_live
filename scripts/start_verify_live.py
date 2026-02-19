@@ -36,15 +36,59 @@ def npm_bin() -> str:
     return "npm.cmd" if os.name == "nt" else "npm"
 
 
+def spawn_process(
+    cmd: list[str],
+    *,
+    cwd: Path,
+    env: Optional[dict[str, str]] = None,
+) -> subprocess.Popen:
+    kwargs: dict = {"cwd": cwd}
+    if env is not None:
+        kwargs["env"] = env
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["preexec_fn"] = os.setsid
+    return subprocess.Popen(cmd, **kwargs)
+
+
 def terminate_process(proc: Optional[subprocess.Popen]) -> None:
     if proc is None or proc.poll() is not None:
         return
-    try:
-        proc.terminate()
-    except Exception:
+    if os.name == "nt":
+        # Windows 下優先送 CTRL_BREAK_EVENT，再用 taskkill /T 清整棵程序樹。
+        try:
+            proc.send_signal(signal.CTRL_BREAK_EVENT)
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=5)
+            return
+        except Exception:
+            pass
+        subprocess.run(
+            ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        try:
+            proc.wait(timeout=5)
+        except Exception:
+            pass
         return
+
     try:
-        proc.wait(timeout=8)
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except Exception:
+        pass
+    try:
+        proc.wait(timeout=6)
+        return
+    except Exception:
+        pass
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
     except Exception:
         try:
             proc.kill()
@@ -116,10 +160,10 @@ def main() -> None:
             )
     else:
         print(f"[verify_live] API 啟動：{' '.join(api_cmd)}")
-        api_proc = subprocess.Popen(api_cmd, cwd=api_dir)
+        api_proc = spawn_process(api_cmd, cwd=api_dir)
 
     print(f"[verify_live] WEB 啟動：{' '.join(web_cmd)}")
-    web_proc = subprocess.Popen(web_cmd, cwd=web_dir, env=web_env)
+    web_proc = spawn_process(web_cmd, cwd=web_dir, env=web_env)
 
     if not args.no_browser:
         time.sleep(2)
@@ -142,11 +186,6 @@ def main() -> None:
     finally:
         terminate_process(web_proc)
         terminate_process(api_proc)
-        if os.name != "nt" and api_proc is not None:
-            try:
-                os.killpg(os.getpgid(api_proc.pid), signal.SIGTERM)  # type: ignore[arg-type]
-            except Exception:
-                pass
         print("[verify_live] 已停止。")
 
 
