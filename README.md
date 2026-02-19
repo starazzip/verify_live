@@ -114,6 +114,7 @@ powershell -ExecutionPolicy Bypass -File scripts/start_verify_live.ps1
    - 數量：0.5%（`qty_tolerance_ratio=0.005`）
 4. 若 config / strategy / datadir 不在本專案目錄下，可在 `.env` 設定：
    - `VERIFY_LIVE_WORKSPACE_ROOT=<你的交易專案根目錄>`
+5. `VERIFY_LIVE_CONFIG_ROOTS` 若使用相對路徑，會先以 `VERIFY_LIVE_WORKSPACE_ROOT` 解析；若不存在，會自動嘗試 `verify_live` 上層目錄。
 
 ## API 摘要
 - `GET /api/verify/configs`

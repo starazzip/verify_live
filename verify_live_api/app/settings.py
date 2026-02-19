@@ -10,13 +10,15 @@ from dotenv import load_dotenv
 
 
 VERIFY_ROOT = Path(__file__).resolve().parents[2]
-WORKSPACE_ROOT = Path(
-    os.getenv("VERIFY_LIVE_WORKSPACE_ROOT", str(VERIFY_ROOT))
-).resolve()
+PARENT_ROOT = VERIFY_ROOT.parent
 
 ENV_FILE = VERIFY_ROOT / ".env"
 if ENV_FILE.exists():
     load_dotenv(ENV_FILE)
+
+WORKSPACE_ROOT = Path(
+    os.getenv("VERIFY_LIVE_WORKSPACE_ROOT", str(VERIFY_ROOT))
+).resolve()
 
 DATA_DIR = VERIFY_ROOT / "data"
 LOG_DIR = VERIFY_ROOT / "logs"
@@ -36,7 +38,11 @@ def _parse_roots(raw: str) -> List[Path]:
             continue
         path = Path(item)
         if not path.is_absolute():
-            path = WORKSPACE_ROOT / path
+            # 相對路徑優先以 WORKSPACE_ROOT 解析；
+            # 若不存在，退回 verify_live 上層目錄（常見 monorepo 佈局）。
+            primary = (WORKSPACE_ROOT / path).resolve()
+            fallback = (PARENT_ROOT / path).resolve()
+            path = primary if primary.exists() else fallback
         paths.append(path.resolve())
     return paths
 
@@ -51,9 +57,12 @@ API_HOST = os.getenv("VERIFY_LIVE_API_HOST", "127.0.0.1")
 API_PORT = int(os.getenv("VERIFY_LIVE_API_PORT", "8011"))
 WEB_PORT = int(os.getenv("VERIFY_LIVE_WEB_PORT", "5179"))
 
-_venv_freqtrade = WORKSPACE_ROOT / ".venv" / "Scripts" / "freqtrade.exe"
-if _venv_freqtrade.exists():
-    DEFAULT_FREQTRADE_BIN = str(_venv_freqtrade)
+_venv_freqtrade_windows = WORKSPACE_ROOT / ".venv" / "Scripts" / "freqtrade.exe"
+_venv_freqtrade_linux = WORKSPACE_ROOT / ".venv" / "bin" / "freqtrade"
+if _venv_freqtrade_windows.exists():
+    DEFAULT_FREQTRADE_BIN = str(_venv_freqtrade_windows)
+elif _venv_freqtrade_linux.exists():
+    DEFAULT_FREQTRADE_BIN = str(_venv_freqtrade_linux)
 else:
     DEFAULT_FREQTRADE_BIN = "freqtrade"
 FREQTRADE_BIN = os.getenv("VERIFY_LIVE_FREQTRADE_BIN", DEFAULT_FREQTRADE_BIN)
