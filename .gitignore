@@ -1,0 +1,13 @@
+.env
+verify_live_api/.venv
+verify_live_web/node_modules
+verify_live_web/dist
+**/__pycache__/
+*.pyc
+logs/*
+runs/*
+data/*.db
+data/*.db-*
+!logs/.gitkeep
+!runs/.gitkeep
+!data/.gitkeep
