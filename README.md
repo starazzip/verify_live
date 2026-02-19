@@ -19,40 +19,66 @@
 
 ## 安裝
 
-### 1) 後端
-```powershell
-cd verify_live/verify_live_api
-python -m venv .venv
-.venv\Scripts\pip.exe install -r requirements.txt
-```
-
-### 2) 前端
-```powershell
-cd verify_live/verify_live_web
-npm install
-```
-
-### 3) 環境變數
-```powershell
+### 1) 建立後端 venv（Windows / Linux 共用）
+```bash
 cd verify_live
+python -m venv verify_live_api/.venv
+```
+
+### 2) 安裝後端依賴
+Windows:
+```powershell
+verify_live_api\.venv\Scripts\python -m pip install -r verify_live_api\requirements.txt
+```
+Linux:
+```bash
+verify_live_api/.venv/bin/python -m pip install -r verify_live_api/requirements.txt
+```
+
+### 3) 安裝前端依賴（Windows / Linux 共用）
+```bash
+cd verify_live
+npm --prefix verify_live_web install
+```
+
+### 4) 建立環境變數檔
+Windows:
+```powershell
 Copy-Item .env.example .env
+```
+Linux:
+```bash
+cp .env.example .env
 ```
 再編輯 `.env`，至少填入：
 - `VERIFY_LIVE_API_BASE_URL`
 - `VERIFY_LIVE_API_USER`
 - `VERIFY_LIVE_API_PASSWORD`
 
-## 啟動
+## 啟動（跨平台）
 
-### 一鍵啟動（建議）
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/start_verify_live.ps1
+### 一鍵啟動（建議，Windows / Linux 同指令）
+```bash
+cd verify_live
+python scripts/start_verify_live.py
 ```
 
-### 分開啟動
+### 分開啟動（Windows / Linux 同指令）
+API:
+```bash
+cd verify_live
+python scripts/start_verify_live_api.py
+```
+Web:
+```bash
+cd verify_live
+python scripts/start_verify_live_web.py --api-base http://127.0.0.1:8011
+```
+
+## PowerShell 腳本（Windows 可選）
+若你偏好 PowerShell，也可使用：
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/start_verify_live_api.ps1
-powershell -ExecutionPolicy Bypass -File scripts/start_verify_live_web.ps1
+powershell -ExecutionPolicy Bypass -File scripts/start_verify_live.ps1
 ```
 
 預設：
