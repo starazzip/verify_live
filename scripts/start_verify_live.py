@@ -5,11 +5,15 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import signal
+import socket
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 import webbrowser
 from pathlib import Path
 from typing import Optional
@@ -48,6 +52,22 @@ def terminate_process(proc: Optional[subprocess.Popen]) -> None:
             pass
 
 
+def is_port_in_use(host: str, port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(1.0)
+        return sock.connect_ex((host, port)) == 0
+
+
+def is_verify_api_alive(host: str, port: int) -> bool:
+    url = f"http://{host}:{port}/api/verify/health"
+    try:
+        with urllib.request.urlopen(url, timeout=2.0) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        return bool(payload.get("ok"))
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError):
+        return False
+
+
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
     load_dotenv(root)
@@ -82,8 +102,22 @@ def main() -> None:
     web_env = os.environ.copy()
     web_env["VITE_VERIFY_LIVE_API_BASE"] = f"http://{args.api_host}:{args.api_port}"
 
-    print(f"[verify_live] API 啟動：{' '.join(api_cmd)}")
-    api_proc = subprocess.Popen(api_cmd, cwd=api_dir)
+    api_proc: Optional[subprocess.Popen] = None
+    if is_port_in_use(args.api_host, args.api_port):
+        if is_verify_api_alive(args.api_host, args.api_port):
+            print(
+                f"[verify_live] 偵測到既有 verify_live API："
+                f"http://{args.api_host}:{args.api_port}，沿用既有服務。"
+            )
+        else:
+            raise RuntimeError(
+                f"連接埠 {args.api_host}:{args.api_port} 已被占用，且非 verify_live API。"
+                "請更換埠號或關閉占用程序。"
+            )
+    else:
+        print(f"[verify_live] API 啟動：{' '.join(api_cmd)}")
+        api_proc = subprocess.Popen(api_cmd, cwd=api_dir)
+
     print(f"[verify_live] WEB 啟動：{' '.join(web_cmd)}")
     web_proc = subprocess.Popen(web_cmd, cwd=web_dir, env=web_env)
 
@@ -95,9 +129,9 @@ def main() -> None:
     try:
         while True:
             time.sleep(1)
-            api_rc = api_proc.poll()
+            api_rc = api_proc.poll() if api_proc is not None else None
             web_rc = web_proc.poll()
-            if api_rc is not None:
+            if api_proc is not None and api_rc is not None:
                 raise RuntimeError(f"API 已結束，exit_code={api_rc}")
             if web_rc is not None:
                 raise RuntimeError(f"WEB 已結束，exit_code={web_rc}")
@@ -108,7 +142,7 @@ def main() -> None:
     finally:
         terminate_process(web_proc)
         terminate_process(api_proc)
-        if os.name != "nt":
+        if os.name != "nt" and api_proc is not None:
             try:
                 os.killpg(os.getpgid(api_proc.pid), signal.SIGTERM)  # type: ignore[arg-type]
             except Exception:

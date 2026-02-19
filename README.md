@@ -66,6 +66,9 @@ python scripts/start_verify_live.py
 - `VERIFY_LIVE_API_HOST`
 - `VERIFY_LIVE_API_PORT`
 - `VERIFY_LIVE_WEB_PORT`
+若 API 埠已被占用：
+- 若該埠是既有 verify_live API，啟動器會自動沿用，不會重啟 API。
+- 若是其他程式占用，會直接報錯提醒你更換埠號或釋放埠。
 
 ### 分開啟動（Windows / Linux 同指令）
 API:
