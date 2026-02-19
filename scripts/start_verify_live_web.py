@@ -9,18 +9,27 @@ import os
 import subprocess
 from pathlib import Path
 
+from _env_loader import env_int, env_str, load_dotenv
+
 
 def npm_bin() -> str:
     return "npm.cmd" if os.name == "nt" else "npm"
 
 
 def main() -> None:
+    root = Path(__file__).resolve().parents[1]
+    load_dotenv(root)
+
+    default_api_host = env_str("VERIFY_LIVE_API_HOST", "127.0.0.1")
+    default_api_port = env_int("VERIFY_LIVE_API_PORT", 8011)
+    default_web_port = env_int("VERIFY_LIVE_WEB_PORT", 5179)
+    default_api_base = f"http://{default_api_host}:{default_api_port}"
+
     parser = argparse.ArgumentParser(description="start verify_live web")
-    parser.add_argument("--api-base", default="http://127.0.0.1:8011")
-    parser.add_argument("--port", type=int, default=5179)
+    parser.add_argument("--api-base", default=default_api_base)
+    parser.add_argument("--port", type=int, default=default_web_port)
     args = parser.parse_args()
 
-    root = Path(__file__).resolve().parents[1]
     web_dir = root / "verify_live_web"
     env = os.environ.copy()
     env["VITE_VERIFY_LIVE_API_BASE"] = str(args.api_base)
@@ -30,4 +39,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -14,6 +14,8 @@ import webbrowser
 from pathlib import Path
 from typing import Optional
 
+from _env_loader import env_int, env_str, load_dotenv
+
 
 def pick_api_python(api_dir: Path) -> str:
     candidates = [
@@ -47,14 +49,20 @@ def terminate_process(proc: Optional[subprocess.Popen]) -> None:
 
 
 def main() -> None:
+    root = Path(__file__).resolve().parents[1]
+    load_dotenv(root)
+
+    default_api_host = env_str("VERIFY_LIVE_API_HOST", "127.0.0.1")
+    default_api_port = env_int("VERIFY_LIVE_API_PORT", 8011)
+    default_web_port = env_int("VERIFY_LIVE_WEB_PORT", 5179)
+
     parser = argparse.ArgumentParser(description="start verify_live api + web")
-    parser.add_argument("--api-host", default="127.0.0.1")
-    parser.add_argument("--api-port", type=int, default=8011)
-    parser.add_argument("--web-port", type=int, default=5179)
+    parser.add_argument("--api-host", default=default_api_host)
+    parser.add_argument("--api-port", type=int, default=default_api_port)
+    parser.add_argument("--web-port", type=int, default=default_web_port)
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
 
-    root = Path(__file__).resolve().parents[1]
     api_dir = root / "verify_live_api"
     web_dir = root / "verify_live_web"
 
@@ -110,4 +118,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

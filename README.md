@@ -62,6 +62,10 @@ cp .env.example .env
 cd verify_live
 python scripts/start_verify_live.py
 ```
+預設會自動讀取 `verify_live/.env` 的：
+- `VERIFY_LIVE_API_HOST`
+- `VERIFY_LIVE_API_PORT`
+- `VERIFY_LIVE_WEB_PORT`
 
 ### 分開啟動（Windows / Linux 同指令）
 API:

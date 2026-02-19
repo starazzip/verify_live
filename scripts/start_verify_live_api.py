@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from _env_loader import env_int, env_str, load_dotenv
+
 
 def pick_api_python(api_dir: Path) -> str:
     candidates = [
@@ -22,12 +24,17 @@ def pick_api_python(api_dir: Path) -> str:
 
 
 def main() -> None:
+    root = Path(__file__).resolve().parents[1]
+    load_dotenv(root)
+
+    default_host = env_str("VERIFY_LIVE_API_HOST", "127.0.0.1")
+    default_port = env_int("VERIFY_LIVE_API_PORT", 8011)
+
     parser = argparse.ArgumentParser(description="start verify_live api")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8011)
+    parser.add_argument("--host", default=default_host)
+    parser.add_argument("--port", type=int, default=default_port)
     args = parser.parse_args()
 
-    root = Path(__file__).resolve().parents[1]
     api_dir = root / "verify_live_api"
     api_python = pick_api_python(api_dir)
     cmd = [
@@ -45,4 +52,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
