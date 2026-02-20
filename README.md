@@ -1,152 +1,372 @@
-# verify_live（獨立專案）
+# verify_live (Standalone Project)
 
-用於驗證 Spot 實盤與回測訊號一致性。
+This project validates signal consistency between live trading and backtesting in Freqtrade, supporting both Spot and Futures.
 
-## 預設目錄佈局（建議）
-`verify_live` 預設假設與 Freqtrade 的 `user_data` 同層：
+## Project Goal
+- Provide a reproducible verification workflow to reduce investigation cost when live and backtest results diverge.
+- Use profiles to manage parameters for repeatable runs and easier comparison.
+- Use lamp indicators and detailed rows to locate mismatches (signal, price, quantity).
 
+## Key Features
+1. Select config from Web UI and auto-fill strategy, timeframe, and data path.
+2. Profiles can be saved, loaded, and deleted.
+3. Run backtest verification and compare against live API signals.
+4. Dual lamps:
+   - Signal lamp: same candle bucket match
+   - Fill lamp: price/quantity tolerance match
+5. Update candle data and monitor job logs in real time.
+6. Compare local config with Live `show_config` (including whitelist/blacklist differences).
+
+## Recommended Layout
 ```text
-<你的專案根目錄>/
+<workspace-root>/
   user_data/
   verify_live/
 ```
 
-若照此佈局，`config_path / strategy_path / datadir` 可直接使用 `user_data/...` 相對路徑。
+With this layout, `config_path / strategy_path / datadir` can directly use `user_data/...` relative paths.
 
-## 功能
-1. Web 選 config，自動帶入策略/週期/資料路徑，允許手動調整。
-2. 啟動後會自動從 `.env` 帶入 Live API 連線欄位（`base_url / username / password`）。
-3. 密碼欄位預設脫敏，可透過「顯示 / 隱藏」按鈕暫時查看。
-4. Profile 可儲存、載入、刪除（刪除時會連同相關 job 結果）。
-5. 一鍵「回測驗證」：執行完整指定區間回測（不依交易紀錄截斷）。
-6. 透過 Freqtrade REST API 讀取 live 交易，做同根 K 比對。
-7. 雙燈號顯示：
+## Project Structure
+- `verify_live_api/`: Backend service (FastAPI)
+- `verify_live_web/`: Frontend app (React + Vite)
+- `data/verify_live.db`: SQLite database for profiles/jobs/signals/comparisons
+- `profiles/`: Reserved folder
+- `scripts/`: Startup and helper scripts
+
+## Windows Setup & Run
+
+### 1) Create backend virtual environment
+```powershell
+cd verify_live
+python -m venv verify_live_api\.venv
+```
+
+### 2) Install backend dependencies
+```powershell
+verify_live_api\.venv\Scripts\python -m pip install -r verify_live_api\requirements.txt
+```
+
+### 3) Install frontend dependencies
+```powershell
+npm --prefix verify_live_web install
+```
+
+### 4) Create environment file
+```powershell
+Copy-Item .env.example .env
+```
+Required fields:
+- `VERIFY_LIVE_API_BASE_URL`
+- `VERIFY_LIVE_API_USER`
+- `VERIFY_LIVE_API_PASSWORD`
+
+### 5) Start all services (recommended)
+```powershell
+python scripts\start_verify_live.py
+```
+
+### 6) Force restart API (if needed)
+```powershell
+python scripts\start_verify_live.py --restart-api
+```
+
+### 7) Start services separately (optional)
+API:
+```powershell
+python scripts\start_verify_live_api.py
+```
+Web:
+```powershell
+python scripts\start_verify_live_web.py --api-base http://127.0.0.1:8011
+```
+
+### 8) Stop services
+- Press `Ctrl+C` in the launcher terminal.
+- If processes remain:
+```powershell
+taskkill /F /T /IM node.exe
+taskkill /F /T /IM uvicorn.exe
+```
+
+### 9) Windows PowerShell script (optional)
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\start_verify_live.ps1
+```
+
+## Linux Setup & Run
+
+### 1) Create backend virtual environment
+```bash
+cd verify_live
+python -m venv verify_live_api/.venv
+```
+
+### 2) Install backend dependencies
+```bash
+verify_live_api/.venv/bin/python -m pip install -r verify_live_api/requirements.txt
+```
+
+### 3) Install frontend dependencies
+```bash
+npm --prefix verify_live_web install
+```
+
+### 4) Create environment file
+```bash
+cp .env.example .env
+```
+Required fields:
+- `VERIFY_LIVE_API_BASE_URL`
+- `VERIFY_LIVE_API_USER`
+- `VERIFY_LIVE_API_PASSWORD`
+
+### 5) Start all services (recommended)
+```bash
+python scripts/start_verify_live.py
+```
+
+### 6) Force restart API (if needed)
+```bash
+python scripts/start_verify_live.py --restart-api
+```
+
+### 7) Start services separately (optional)
+API:
+```bash
+python scripts/start_verify_live_api.py
+```
+Web:
+```bash
+python scripts/start_verify_live_web.py --api-base http://127.0.0.1:8011
+```
+
+### 8) Stop services
+- Press `Ctrl+C` in the launcher terminal.
+- If processes remain:
+```bash
+pkill -f "vite"
+pkill -f "uvicorn app.main:app"
+```
+
+## Default Ports
+- API: `http://127.0.0.1:8011`
+- Web: `http://127.0.0.1:5179`
+
+## Important Notes
+1. `timerange_end_mode=now` is resolved to current UTC date at runtime.
+2. Spot and Futures are both supported; actual behavior depends on `trading_mode`, `margin_mode`, exchange settings, and strategy `can_short`.
+3. Default tolerance: price `10 bps`, quantity `0.5%` (`qty_tolerance_ratio=0.005`).
+4. Path resolution for `config_path / strategy_path / datadir`:
+   - Absolute path: used directly.
+   - Relative path: resolved in order:
+     1) `VERIFY_LIVE_WORKSPACE_ROOT`
+     2) Parent directory of `verify_live`
+     3) `verify_live` project root
+5. If strategy class is not found in `strategy_path`, the system searches `user_data/**/strategies`.
+6. Relative paths in `VERIFY_LIVE_CONFIG_ROOTS` follow the same resolution rules.
+
+## Recommended Verification Flow
+1. Load or create a profile.
+2. Run "Compare Live Config" first to confirm key parameters.
+3. Run "Update Candles" when data refresh is needed.
+4. Run "Backtest Verification" and inspect summary/details.
+
+## API Summary
+- `GET /api/verify/defaults`
+- `GET /api/verify/configs`
+- `GET /api/verify/profiles`
+- `POST /api/verify/profiles`
+- `POST /api/verify/profiles/{profile_id}/config-compare`
+- `DELETE /api/verify/profiles/{profile_id}`
+- `POST /api/verify/jobs`
+- `GET /api/verify/jobs/{job_id}`
+- `GET /api/verify/jobs/{job_id}/logs/tail`
+- `POST /api/verify/jobs/{job_id}/cancel`
+- `POST /api/verify/data-jobs`
+- `GET /api/verify/data-jobs/{data_job_id}`
+- `GET /api/verify/data-jobs/{data_job_id}/logs/tail`
+- `GET /api/verify/jobs/{job_id}/signals?source=backtest|live`
+- `GET /api/verify/jobs/{job_id}/compare/summary`
+- `GET /api/verify/jobs/{job_id}/compare/details`
+
+## Security Notes
+- `.env` may contain credentials/API keys and must not be committed.
+- Keep only placeholder keys in `.env.example`, never real secrets.
+
+---
+
+# verify_live（獨立專案）
+
+本專案用於驗證 Freqtrade 實盤與回測訊號的一致性，支援 Spot 與 Futures。
+
+## 專案目標
+- 建立可重現的驗證流程，降低「實盤與回測不一致」的排查成本。
+- 以 Profile 管理參數，支援重複執行與結果比對。
+- 透過燈號與明細快速定位差異（訊號、價格、數量）。
+
+## 核心功能
+1. 以 Web 介面選擇 config，並自動帶入策略、週期、資料路徑。
+2. Profile 可儲存、載入、刪除。
+3. 一鍵執行回測驗證，並與 Live API 訊號比對。
+4. 提供雙燈號：
    - 訊號燈：同根 K 是否一致
    - 成交燈：價量是否在容忍度內
-8. 可按「更新 K 線」：依目前 config / timeframe / 日期區間，向交易所下載資料。
-9. 任務執行中可按「停止驗證」中止回測任務。
-10. 回測與更新 K 線執行中，頁面會即時顯示 Freqtrade 最後幾行輸出。
-11. 可按「比對 Live Config」檢查本地 config 與 Freqtrade `show_config` 是否一致。
-12. Config 比對含幣對白名單/黑名單（透過 Live API `whitelist` / `blacklist`）差異檢查。
+5. 可更新 K 線資料並即時追蹤任務日誌。
+6. 支援比對本地 config 與 Live `show_config`（含白名單/黑名單差異）。
 
-## 目錄
-- `verify_live_api/`: FastAPI 後端
-- `verify_live_web/`: React + Vite 前端
-- `data/verify_live.db`: Profile / Job / Signals / Compare 資料庫
-- `profiles/`: 可選 profile 檔案資料夾（保留）
-- `scripts/`: 啟動腳本
+## 建議目錄佈局
+```text
+<workspace-root>/
+  user_data/
+  verify_live/
+```
 
-## 安裝
+若使用此佈局，`config_path / strategy_path / datadir` 可直接使用 `user_data/...` 相對路徑。
 
-### 1) 建立後端 venv（Windows / Linux 共用）
+## 專案目錄
+- `verify_live_api/`: 後端服務（FastAPI）
+- `verify_live_web/`: 前端應用（React + Vite）
+- `data/verify_live.db`: Profile / Job / Signals / Compare 的 SQLite 資料庫
+- `profiles/`: 預留資料夾
+- `scripts/`: 啟動與管理腳本
+
+## Windows 安裝與啟動
+
+### 1) 建立後端虛擬環境
+```powershell
+cd verify_live
+python -m venv verify_live_api\.venv
+```
+
+### 2) 安裝後端依賴
+```powershell
+verify_live_api\.venv\Scripts\python -m pip install -r verify_live_api\requirements.txt
+```
+
+### 3) 安裝前端依賴
+```powershell
+npm --prefix verify_live_web install
+```
+
+### 4) 建立環境變數檔
+```powershell
+Copy-Item .env.example .env
+```
+必填欄位：
+- `VERIFY_LIVE_API_BASE_URL`
+- `VERIFY_LIVE_API_USER`
+- `VERIFY_LIVE_API_PASSWORD`
+
+### 5) 一鍵啟動（建議）
+```powershell
+python scripts\start_verify_live.py
+```
+
+### 6) 強制重啟 API（必要時）
+```powershell
+python scripts\start_verify_live.py --restart-api
+```
+
+### 7) 分開啟動（可選）
+API:
+```powershell
+python scripts\start_verify_live_api.py
+```
+Web:
+```powershell
+python scripts\start_verify_live_web.py --api-base http://127.0.0.1:8011
+```
+
+### 8) 停止服務
+- 在啟動終端按 `Ctrl+C`。
+- 若有殘留程序：
+```powershell
+taskkill /F /T /IM node.exe
+taskkill /F /T /IM uvicorn.exe
+```
+
+### 9) PowerShell 腳本（可選）
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\start_verify_live.ps1
+```
+
+## Linux 安裝與啟動
+
+### 1) 建立後端虛擬環境
 ```bash
 cd verify_live
 python -m venv verify_live_api/.venv
 ```
 
 ### 2) 安裝後端依賴
-Windows:
-```powershell
-verify_live_api\.venv\Scripts\python -m pip install -r verify_live_api\requirements.txt
-```
-Linux:
 ```bash
 verify_live_api/.venv/bin/python -m pip install -r verify_live_api/requirements.txt
 ```
 
-### 3) 安裝前端依賴（Windows / Linux 共用）
+### 3) 安裝前端依賴
 ```bash
-cd verify_live
 npm --prefix verify_live_web install
 ```
 
 ### 4) 建立環境變數檔
-Windows:
-```powershell
-Copy-Item .env.example .env
-```
-Linux:
 ```bash
 cp .env.example .env
 ```
-再編輯 `.env`，至少填入：
+必填欄位：
 - `VERIFY_LIVE_API_BASE_URL`
 - `VERIFY_LIVE_API_USER`
 - `VERIFY_LIVE_API_PASSWORD`
 
-## 啟動（跨平台）
-
-### 一鍵啟動（建議，Windows / Linux 同指令）
+### 5) 一鍵啟動（建議）
 ```bash
-cd verify_live
 python scripts/start_verify_live.py
 ```
-預設會自動讀取 `verify_live/.env` 的：
-- `VERIFY_LIVE_API_HOST`
-- `VERIFY_LIVE_API_PORT`
-- `VERIFY_LIVE_WEB_PORT`
-若 API 埠已被占用：
-- 若該埠是既有 verify_live API，啟動器會自動沿用，不會重啟 API。
-- 若是其他程式占用，會直接報錯提醒你更換埠號或釋放埠。
 
-若你懷疑埠上是舊版 API（例如更新後 `config` 清單仍為空），可強制重啟：
+### 6) 強制重啟 API（必要時）
 ```bash
-cd verify_live
 python scripts/start_verify_live.py --restart-api
 ```
 
-### 終止程序
-- 預設可用 `Ctrl+C` 停止（會自動關閉 API / Web 子程序樹）。
-- 若仍殘留程序，可手動執行：
-Windows:
-```powershell
-taskkill /F /T /IM node.exe
-taskkill /F /T /IM uvicorn.exe
+### 7) 分開啟動（可選）
+API:
+```bash
+python scripts/start_verify_live_api.py
 ```
-Linux:
+Web:
+```bash
+python scripts/start_verify_live_web.py --api-base http://127.0.0.1:8011
+```
+
+### 8) 停止服務
+- 在啟動終端按 `Ctrl+C`。
+- 若有殘留程序：
 ```bash
 pkill -f "vite"
 pkill -f "uvicorn app.main:app"
 ```
 
-### 分開啟動（Windows / Linux 同指令）
-API:
-```bash
-cd verify_live
-python scripts/start_verify_live_api.py
-```
-Web:
-```bash
-cd verify_live
-python scripts/start_verify_live_web.py --api-base http://127.0.0.1:8011
-```
-
-## PowerShell 腳本（Windows 可選）
-若你偏好 PowerShell，也可使用：
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/start_verify_live.ps1
-```
-
-預設：
+## 預設連接埠
 - API: `http://127.0.0.1:8011`
 - Web: `http://127.0.0.1:5179`
 
 ## 重要設定
 1. `timerange_end_mode=now` 會在任務啟動時解析為當下 UTC 日期。
-2. 目前只做 Spot。
-3. 第一版預設容忍度：
-   - 價格：10 bps
-   - 數量：0.5%（`qty_tolerance_ratio=0.005`）
-4. 路徑統一解析規則（`config_path / strategy_path / datadir`）：
+2. 支援 Spot 與 Futures；實際可用模式取決於 `trading_mode`、`margin_mode`、交易所設定與策略 `can_short`。
+3. 預設容忍度：價格 `10 bps`、數量 `0.5%`（`qty_tolerance_ratio=0.005`）。
+4. `config_path / strategy_path / datadir` 路徑解析規則：
    - 絕對路徑：直接使用
    - 相對路徑：依序嘗試
      1) `VERIFY_LIVE_WORKSPACE_ROOT`
      2) `verify_live` 上層目錄
      3) `verify_live` 專案目錄
-   - `strategy` 類別若不在填寫的 `strategy_path`，會自動在 `user_data` 下各層 `strategies` 目錄補找
-5. 若你的實際資料不在預設佈局，可在 `.env` 設定：
-   - `VERIFY_LIVE_WORKSPACE_ROOT=<你的交易專案根目錄>`
-6. `VERIFY_LIVE_CONFIG_ROOTS` 若使用相對路徑，也會套用上述同一套解析規則。
+5. 若 `strategy_path` 找不到策略類別，系統會自動搜尋 `user_data/**/strategies`。
+6. `VERIFY_LIVE_CONFIG_ROOTS` 的相對路徑同樣套用上述解析規則。
+
+## 建議驗證流程
+1. 載入或建立 Profile。
+2. 先執行「比對 Live Config」，確認核心參數一致。
+3. 視需求執行「更新 K 線」。
+4. 執行「回測驗證」，檢視 Summary 與 Details。
 
 ## API 摘要
 - `GET /api/verify/defaults`
@@ -165,3 +385,7 @@ powershell -ExecutionPolicy Bypass -File scripts/start_verify_live.ps1
 - `GET /api/verify/jobs/{job_id}/signals?source=backtest|live`
 - `GET /api/verify/jobs/{job_id}/compare/summary`
 - `GET /api/verify/jobs/{job_id}/compare/details`
+
+## 安全建議
+- `.env` 可能包含帳密或 API 金鑰，不應提交至版本控制。
+- `.env.example` 僅保留欄位名稱，不放任何真實密鑰。

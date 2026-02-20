@@ -494,7 +494,7 @@ export default function App() {
     <div className="page">
       <header className="header">
         <h1>verify_live</h1>
-        <p>Spot 實盤 vs 回測一致性驗證（同根 K + 價量燈號）</p>
+        <p>Spot / 合約（Futures）實盤 vs 回測一致性驗證（同根 K + 價量燈號）</p>
         <p className="muted">API Base: {API_BASE}</p>
       </header>
 
