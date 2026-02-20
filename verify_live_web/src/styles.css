@@ -256,6 +256,11 @@ button {
   background: #ffffff;
 }
 
+.btn-mini {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
 .btn-primary {
   background: #1d4ed8;
   color: #fff;
@@ -340,6 +345,33 @@ button {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 12px;
+}
+
+.workspace-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.workspace-tab-btn {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #334155;
+  font-size: 12px;
+}
+
+.workspace-tab-btn.active {
+  border-color: #1d4ed8;
+  background: #dbeafe;
+  color: #1e3a8a;
+  font-weight: 700;
+}
+
+.workspace-tab-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .sub-title {
@@ -549,6 +581,24 @@ th {
 
 .lamp-red {
   background: #ef4444;
+}
+
+.lamp-blue {
+  background: #2563eb;
+}
+
+.price-diff-good {
+  color: #15803d;
+  font-weight: 700;
+}
+
+.price-diff-bad {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+.price-diff-neutral {
+  color: #64748b;
 }
 
 .muted {

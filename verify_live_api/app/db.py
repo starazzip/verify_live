@@ -446,12 +446,14 @@ def get_compare_summary(job_id: str) -> Dict[str, Any]:
         row = conn.execute(
             """
             SELECT
-                COUNT(*) AS total_rows,
-                SUM(CASE WHEN signal_lamp='green' THEN 1 ELSE 0 END) AS signal_green,
-                SUM(CASE WHEN signal_lamp='red' THEN 1 ELSE 0 END) AS signal_red,
-                SUM(CASE WHEN fill_lamp='green' THEN 1 ELSE 0 END) AS fill_green,
-                SUM(CASE WHEN fill_lamp='yellow' THEN 1 ELSE 0 END) AS fill_yellow,
-                SUM(CASE WHEN fill_lamp='red' THEN 1 ELSE 0 END) AS fill_red
+                COUNT(*) AS total_all_rows,
+                SUM(CASE WHEN signal_state='IGNORED_TAIL_FORCE_EXIT' THEN 1 ELSE 0 END) AS ignored_tail_force_exit,
+                SUM(CASE WHEN signal_state!='IGNORED_TAIL_FORCE_EXIT' THEN 1 ELSE 0 END) AS total_rows,
+                SUM(CASE WHEN signal_state!='IGNORED_TAIL_FORCE_EXIT' AND signal_lamp='green' THEN 1 ELSE 0 END) AS signal_green,
+                SUM(CASE WHEN signal_state!='IGNORED_TAIL_FORCE_EXIT' AND signal_lamp='red' THEN 1 ELSE 0 END) AS signal_red,
+                SUM(CASE WHEN signal_state!='IGNORED_TAIL_FORCE_EXIT' AND fill_lamp='green' THEN 1 ELSE 0 END) AS fill_green,
+                SUM(CASE WHEN signal_state!='IGNORED_TAIL_FORCE_EXIT' AND fill_lamp='yellow' THEN 1 ELSE 0 END) AS fill_yellow,
+                SUM(CASE WHEN signal_state!='IGNORED_TAIL_FORCE_EXIT' AND fill_lamp='red' THEN 1 ELSE 0 END) AS fill_red
             FROM compare_results
             WHERE job_id=?
             """,

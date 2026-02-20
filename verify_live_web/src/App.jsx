@@ -41,6 +41,7 @@ const DEFAULT_FORM = {
 };
 
 const TIMEFRAME_OPTIONS = ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"];
+const SIGNAL_STATE_IGNORED_TAIL_FORCE_EXIT = "IGNORED_TAIL_FORCE_EXIT";
 
 function parseTimeframes(value) {
   if (Array.isArray(value)) {
@@ -65,6 +66,7 @@ function mergeTimeframes(primary, selected, customInput = "") {
 function lampClass(color) {
   if (color === "green") return "lamp lamp-green";
   if (color === "yellow") return "lamp lamp-yellow";
+  if (color === "blue") return "lamp lamp-blue";
   return "lamp lamp-red";
 }
 
@@ -75,12 +77,40 @@ function fmtNum(value, digits = 4) {
   return n.toFixed(digits);
 }
 
-function fmtPriceDiff(value) {
+function fmtTsMillis(value) {
   if (value === null || value === undefined || value === "") return "-";
-  const bps = Number(value);
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toISOString();
+}
+
+function calcSignedPriceDiffBps(btPrice, livePrice) {
+  const bt = Number(btPrice);
+  const live = Number(livePrice);
+  if (!Number.isFinite(bt) || !Number.isFinite(live) || bt === 0) return null;
+  return ((live - bt) / Math.abs(bt)) * 10000;
+}
+
+function fmtSigned(value, digits) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "-";
+  return `${n >= 0 ? "+" : ""}${n.toFixed(digits)}`;
+}
+
+function fmtPriceDiffByActualMinusExpected(btPrice, livePrice) {
+  const bps = calcSignedPriceDiffBps(btPrice, livePrice);
   if (!Number.isFinite(bps)) return "-";
   const pct = bps / 100;
-  return `${bps.toFixed(2)} bps (${pct.toFixed(4)}%)`;
+  return `${fmtSigned(bps, 2)} bps (${fmtSigned(pct, 4)}%)`;
+}
+
+function priceDiffClass(row) {
+  if (row?.signal_lamp !== "green") return "price-diff-neutral";
+  const signedBps = calcSignedPriceDiffBps(row?.bt_price, row?.live_price);
+  if (!Number.isFinite(signedBps)) return "price-diff-neutral";
+  if (signedBps < 0) return "price-diff-good";
+  if (signedBps > 0) return "price-diff-bad";
+  return "price-diff-neutral";
 }
 
 function toStringMap(obj) {
@@ -128,11 +158,31 @@ function statusText(status) {
   return status;
 }
 
+function signalStateText(state) {
+  if (state === SIGNAL_STATE_IGNORED_TAIL_FORCE_EXIT) return "尾端 force_exit（不統計）";
+  return state;
+}
+
 function taskTone(status) {
   if (status === "completed") return "ok";
   if (status === "running" || status === "pending" || status === "cancel_requested") return "warn";
   if (status === "failed" || status === "cancelled") return "bad";
   return "idle";
+}
+
+function buildDetailRowId(row, idx) {
+  return [
+    row?.pair || "",
+    row?.side || "",
+    row?.bucket_ts || "",
+    row?.bt_signal_ts || "",
+    row?.live_signal_ts || "",
+    row?.bt_price ?? "",
+    row?.live_price ?? "",
+    row?.bt_amount ?? "",
+    row?.live_amount ?? "",
+    idx,
+  ].join("|");
 }
 
 export default function App() {
@@ -152,6 +202,7 @@ export default function App() {
   const [configCompare, setConfigCompare] = useState(null);
   const [summary, setSummary] = useState(null);
   const [details, setDetails] = useState([]);
+  const [ignoredRowIds, setIgnoredRowIds] = useState({});
   const [btSignals, setBtSignals] = useState([]);
   const [liveSignals, setLiveSignals] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -164,6 +215,47 @@ export default function App() {
   const hasSignalResult = Boolean(summary || details.length || btSignals.length || liveSignals.length);
   const hasConfigResult = Boolean(configCompare);
   const hasDataJobResult = Boolean(dataJob && ["completed", "failed", "cancelled"].includes(dataJob.status));
+  const ignoredDetails = useMemo(() => details.filter((row) => ignoredRowIds[row.__row_id]), [details, ignoredRowIds]);
+  const visibleDetails = useMemo(() => details.filter((row) => !ignoredRowIds[row.__row_id]), [details, ignoredRowIds]);
+  const summaryView = useMemo(() => {
+    if (!summary) return null;
+    let total = Number(summary.total_rows || 0);
+    let signalGreen = Number(summary.signal_green || 0);
+    let signalRed = Number(summary.signal_red || 0);
+    let fillGreen = Number(summary.fill_green || 0);
+    let fillYellow = Number(summary.fill_yellow || 0);
+    let fillRed = Number(summary.fill_red || 0);
+
+    for (const row of ignoredDetails) {
+      if (row.signal_state === SIGNAL_STATE_IGNORED_TAIL_FORCE_EXIT) continue;
+      total -= 1;
+      if (row.signal_lamp === "green") signalGreen -= 1;
+      if (row.signal_lamp === "red") signalRed -= 1;
+      if (row.fill_lamp === "green") fillGreen -= 1;
+      if (row.fill_lamp === "yellow") fillYellow -= 1;
+      if (row.fill_lamp === "red") fillRed -= 1;
+    }
+
+    total = Math.max(0, total);
+    signalGreen = Math.max(0, signalGreen);
+    signalRed = Math.max(0, signalRed);
+    fillGreen = Math.max(0, fillGreen);
+    fillYellow = Math.max(0, fillYellow);
+    fillRed = Math.max(0, fillRed);
+
+    return {
+      ...summary,
+      total_rows: total,
+      signal_green: signalGreen,
+      signal_red: signalRed,
+      fill_green: fillGreen,
+      fill_yellow: fillYellow,
+      fill_red: fillRed,
+      signal_match_rate: total ? signalGreen / total : 0,
+      fill_green_rate: total ? fillGreen / total : 0,
+      ignored_rows: ignoredDetails.length,
+    };
+  }, [summary, ignoredDetails]);
 
   useEffect(() => {
     bootstrap();
@@ -349,9 +441,19 @@ export default function App() {
       fetchSignals(jobId, "live", 2000),
     ]);
     setSummary(sum);
-    setDetails(det.items || []);
+    setDetails((det.items || []).map((row, idx) => ({ ...row, __row_id: buildDetailRowId(row, idx) })));
+    setIgnoredRowIds({});
     setBtSignals(bt.items || []);
     setLiveSignals(lv.items || []);
+  }
+
+  function onIgnoreDetailRow(rowId) {
+    if (!rowId) return;
+    setIgnoredRowIds((prev) => ({ ...prev, [rowId]: true }));
+  }
+
+  function onResetIgnoredRows() {
+    setIgnoredRowIds({});
   }
 
   function openTimeframePicker() {
@@ -423,6 +525,7 @@ export default function App() {
     setJobLogTail("");
     setSummary(null);
     setDetails([]);
+    setIgnoredRowIds({});
     setBtSignals([]);
     setLiveSignals([]);
     try {
@@ -643,11 +746,30 @@ export default function App() {
       <section className="panel workspace-panel">
         <div className="workspace-head">
           <h2>工作台</h2>
-          <div className="muted">
-            目前檢視：
-            {workspaceTab === "monitor" && " 任務監看"}
-            {workspaceTab === "config" && " Config 比對"}
-            {workspaceTab === "signals" && " 訊號比對"}
+          <div className="workspace-tabs">
+            <button
+              type="button"
+              className={`workspace-tab-btn ${workspaceTab === "monitor" ? "active" : ""}`}
+              onClick={() => setWorkspaceTab("monitor")}
+            >
+              任務狀態
+            </button>
+            <button
+              type="button"
+              className={`workspace-tab-btn ${workspaceTab === "config" ? "active" : ""}`}
+              onClick={() => setWorkspaceTab("config")}
+              disabled={!hasConfigResult}
+            >
+              Config結果
+            </button>
+            <button
+              type="button"
+              className={`workspace-tab-btn ${workspaceTab === "signals" ? "active" : ""}`}
+              onClick={() => setWorkspaceTab("signals")}
+              disabled={!hasSignalResult}
+            >
+              訊號結果
+            </button>
           </div>
         </div>
 
@@ -783,23 +905,33 @@ export default function App() {
         {workspaceTab === "signals" && (
           <>
             <h3 className="sub-title">比對摘要</h3>
-            {!summary && <div className="muted">任務完成後顯示</div>}
-            {summary && (
+            {!summaryView && <div className="muted">任務完成後顯示</div>}
+            {summaryView && (
               <div className="summary-grid">
-                <SummaryItem label="總筆數" value={summary.total_rows} />
-                <SummaryItem label="訊號綠燈" value={summary.signal_green} />
-                <SummaryItem label="訊號紅燈" value={summary.signal_red} />
-                <SummaryItem label="成交綠燈" value={summary.fill_green} />
-                <SummaryItem label="成交黃燈" value={summary.fill_yellow} />
-                <SummaryItem label="成交紅燈" value={summary.fill_red} />
-                <SummaryItem label="訊號一致率" value={`${fmtNum((summary.signal_match_rate || 0) * 100, 2)}%`} />
-                <SummaryItem label="成交綠燈率" value={`${fmtNum((summary.fill_green_rate || 0) * 100, 2)}%`} />
+                <SummaryItem label="總筆數" value={summaryView.total_rows} />
+                <SummaryItem label="訊號綠燈" value={summaryView.signal_green} />
+                <SummaryItem label="訊號紅燈" value={summaryView.signal_red} />
+                <SummaryItem label="成交綠燈" value={summaryView.fill_green} />
+                <SummaryItem label="成交黃燈" value={summaryView.fill_yellow} />
+                <SummaryItem label="成交紅燈" value={summaryView.fill_red} />
+                <SummaryItem label="訊號一致率" value={`${fmtNum((summaryView.signal_match_rate || 0) * 100, 2)}%`} />
+                <SummaryItem label="成交綠燈率" value={`${fmtNum((summaryView.fill_green_rate || 0) * 100, 2)}%`} />
+                <SummaryItem label="已忽略筆數" value={summaryView.ignored_rows || 0} />
+                <SummaryItem label="尾端 force_exit(不統計)" value={summaryView.ignored_tail_force_exit || 0} />
                 <SummaryItem label="Backtest 訊號數" value={btSignals.length} />
                 <SummaryItem label="Live 訊號數" value={liveSignals.length} />
               </div>
             )}
 
             <h3 className="sub-title">比對明細（前 3000 筆）</h3>
+            {ignoredDetails.length > 0 && (
+              <div className="actions">
+                <div className="muted">已忽略 {ignoredDetails.length} 筆</div>
+                <button className="btn-ghost btn-mini" onClick={onResetIgnoredRows}>
+                  取消全部忽略
+                </button>
+              </div>
+            )}
             <div className="table-wrap">
               <table>
                 <thead>
@@ -807,36 +939,50 @@ export default function App() {
                     <th>pair</th>
                     <th>side</th>
                     <th>bucket</th>
+                    <th>實盤下單時間(UTC, ms)</th>
                     <th>訊號燈</th>
                     <th>成交燈</th>
-                    <th>價格差(bps / %)</th>
+                    <th>價格差(bps / %)〔實際-預期〕</th>
                     <th>數量差(%)</th>
                     <th>狀態</th>
                     <th>原因</th>
+                    <th>操作</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {details.map((row, idx) => (
-                    <tr key={`${row.pair}-${row.side}-${row.bucket_ts}-${idx}`}>
+                  {visibleDetails.map((row) => (
+                    <tr key={row.__row_id || `${row.pair}-${row.side}-${row.bucket_ts}`}>
                       <td>{row.pair}</td>
                       <td>{row.side}</td>
                       <td>{row.bucket_ts}</td>
+                      <td>{fmtTsMillis(row.live_signal_ts)}</td>
                       <td>
                         <span className={lampClass(row.signal_lamp)} />
                       </td>
                       <td>
                         <span className={lampClass(row.fill_lamp)} />
                       </td>
-                      <td>{fmtPriceDiff(row.price_diff_bps)}</td>
+                      <td>
+                        <span className={priceDiffClass(row)} title="公式：實際價 - 預期價（Live - Backtest）">
+                          {row.signal_lamp === "green"
+                            ? fmtPriceDiffByActualMinusExpected(row.bt_price, row.live_price)
+                            : "-"}
+                        </span>
+                      </td>
                       <td>{fmtNum((row.qty_diff_ratio || 0) * 100, 2)}</td>
-                      <td>{row.signal_state}</td>
+                      <td>{signalStateText(row.signal_state)}</td>
                       <td>{row.reason}</td>
+                      <td>
+                        <button className="btn-ghost btn-mini" onClick={() => onIgnoreDetailRow(row.__row_id)}>
+                          忽略
+                        </button>
+                      </td>
                     </tr>
                   ))}
-                  {details.length === 0 && (
+                  {visibleDetails.length === 0 && (
                     <tr>
-                      <td colSpan={9} className="muted center">
-                        尚無資料
+                      <td colSpan={11} className="muted center">
+                        {details.length > 0 ? `目前無顯示資料（已忽略 ${ignoredDetails.length} 筆）` : "尚無資料"}
                       </td>
                     </tr>
                   )}
