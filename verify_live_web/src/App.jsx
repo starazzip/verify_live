@@ -108,6 +108,14 @@ function priceDiffClass(row) {
   if (row?.signal_lamp !== "green") return "price-diff-neutral";
   const signedBps = calcSignedPriceDiffBps(row?.bt_price, row?.live_price);
   if (!Number.isFinite(signedBps)) return "price-diff-neutral";
+  if (signedBps === 0) return "price-diff-neutral";
+  const side = String(row?.side || "").toLowerCase();
+  if (side === "exit") {
+    return signedBps > 0 ? "price-diff-good" : "price-diff-bad";
+  }
+  if (side === "entry") {
+    return signedBps > 0 ? "price-diff-bad" : "price-diff-good";
+  }
   if (signedBps < 0) return "price-diff-good";
   if (signedBps > 0) return "price-diff-bad";
   return "price-diff-neutral";

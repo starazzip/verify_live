@@ -127,6 +127,40 @@ def _safe_float(value: Any) -> Optional[float]:
         return None
 
 
+def _valid_price(value: Any) -> Optional[float]:
+    price = _safe_float(value)
+    if price is None or price <= 0:
+        return None
+    return price
+
+
+def _price_from_orders(trade: Dict[str, Any], *, is_entry: bool) -> Optional[float]:
+    """優先從 orders.safe_price 取成交均價，避免 open_rate/close_rate 為 0。"""
+
+    orders = trade.get("orders")
+    if not isinstance(orders, list) or not orders:
+        return None
+
+    total_cost = 0.0
+    total_amount = 0.0
+    for order in orders:
+        if bool(order.get("ft_is_entry")) != is_entry:
+            continue
+        price = _valid_price(order.get("safe_price"))
+        amount = _safe_float(order.get("filled"))
+        if amount is None or amount <= 0:
+            amount = _safe_float(order.get("amount"))
+        if price is None or amount is None or amount <= 0:
+            continue
+        total_cost += price * amount
+        total_amount += amount
+
+    if total_amount <= 0:
+        return None
+    avg = total_cost / total_amount
+    return avg if avg > 0 else None
+
+
 def _is_same_second(ts_a: str, ts_b: str) -> bool:
     dt_a = _parse_iso_dt(ts_a)
     dt_b = _parse_iso_dt(ts_b)
@@ -161,8 +195,10 @@ def trades_to_signals(
         open_dt = _parse_trade_event_dt(t, "entry")
         close_dt = _parse_trade_event_dt(t, "exit")
 
-        open_rate = _safe_float(t.get("open_rate"))
-        close_rate = _safe_float(t.get("close_rate"))
+        open_rate = _valid_price(t.get("open_rate")) or _valid_price(t.get("safe_open_rate"))
+        close_rate = _valid_price(t.get("close_rate")) or _valid_price(t.get("safe_close_rate"))
+        open_price = _price_from_orders(t, is_entry=True) or open_rate
+        close_price = _price_from_orders(t, is_entry=False) or close_rate
         enter_tag = str(t.get("enter_tag") or "")
         exit_reason = str(t.get("exit_reason") or "")
 
@@ -175,7 +211,7 @@ def trades_to_signals(
                     "side": "entry",
                     "bucket_ts": bucket.isoformat(),
                     "signal_ts": _iso_millis(open_dt),
-                    "price": open_rate,
+                    "price": open_price,
                     "amount": amount,
                     "enter_tag": enter_tag,
                     "exit_reason": "",
@@ -194,7 +230,7 @@ def trades_to_signals(
                     "side": "exit",
                     "bucket_ts": bucket.isoformat(),
                     "signal_ts": _iso_millis(close_dt),
-                    "price": close_rate,
+                    "price": close_price,
                     "amount": amount,
                     "enter_tag": enter_tag,
                     "exit_reason": exit_reason,
